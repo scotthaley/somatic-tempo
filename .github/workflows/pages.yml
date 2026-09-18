@@ -1,0 +1,60 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [prototype2]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Let a running deploy finish; queue at most one more.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+defaults:
+  run:
+    working-directory: prototype
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Must precede setup-node so its pnpm cache can find the binary.
+      # Version comes from the packageManager field in prototype/package.json.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: prototype/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm test
+
+      - run: pnpm build
+        env:
+          # Set once the duel room worker is deployed; empty until then,
+          # which leaves the build solo-only rather than failing.
+          VITE_PARTY_HOST: ${{ vars.VITE_PARTY_HOST }}
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: prototype/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
