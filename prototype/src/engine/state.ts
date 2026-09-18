@@ -5,7 +5,6 @@ import type { Hex } from "./hex";
 export const MAX_VITALITY = 20;
 export const HAND_SIZE = 5;
 export const MAX_ROUNDS = 15;
-export const RETAIN_LIMIT = 1;
 
 export type Side = 0 | 1;
 export const other = (s: Side): Side => (s === 0 ? 1 : 0);
@@ -48,14 +47,29 @@ export interface Fighter {
   hand: string[];
   discard: string[];
   stacks: Stack[];
+  /** The random pool cards rolled into this deck at duel start. */
+  extras: string[];
 }
 
+/**
+ * The whole round's resolution. Sides alternate mini-turns: any moves, at most one
+ * card, any moves, ended by a `pass`. `side` is the baton holder.
+ */
 export interface Resolving {
   side: Side;
-  budget: number;
-  spent: number;
-  played: [boolean, boolean];
-  ignoreObstacles: boolean;
+  /** Increments on every baton pass. Used to key one mini-turn of AI playback. */
+  turn: number;
+  /** Pooled movement per side for the round; carries between that side's mini-turns. */
+  budget: [number, number];
+  spent: [number, number];
+  played: [[boolean, boolean], [boolean, boolean]];
+  ignoreObstacles: [boolean, boolean];
+  /** Mini-turns taken, at most 2 each. */
+  steps: [number, number];
+  /** Forfeited, or both mini-turns used. */
+  done: [boolean, boolean];
+  /** A card has already been played in the current mini-turn. */
+  cardThisStep: boolean;
 }
 
 export interface PlayedCard {
@@ -74,6 +88,9 @@ export type Action =
   | { type: "commit"; side: Side; cards: [number, number] }
   | { type: "move"; side: Side; to: Hex }
   | { type: "play"; side: Side; index: 0 | 1 }
+  /** End this mini-turn, keeping unplayed cards for the next one. */
+  | { type: "pass"; side: Side }
+  /** Forfeit every unplayed card and take no further mini-turns this round. */
   | { type: "end"; side: Side };
 
 /** One player's round, logged for history-based ghosts (design doc §3). */
@@ -165,6 +182,7 @@ function cloneFighter(f: Fighter): Fighter {
     hand: [...f.hand],
     discard: [...f.discard],
     stacks: f.stacks.map((s) => ({ ...s })),
+    extras: [...f.extras],
   };
 }
 
@@ -175,7 +193,15 @@ export function cloneState(s: DuelState, quiet = true): DuelState {
     committed: [s.committed[0] && [...s.committed[0]], s.committed[1] && [...s.committed[1]]],
     initiative: s.initiative && [...s.initiative],
     order: s.order && [...s.order],
-    resolving: s.resolving && { ...s.resolving, played: [...s.resolving.played] },
+    resolving: s.resolving && {
+      ...s.resolving,
+      budget: [...s.resolving.budget],
+      spent: [...s.resolving.spent],
+      played: [[...s.resolving.played[0]], [...s.resolving.played[1]]],
+      ignoreObstacles: [...s.resolving.ignoreObstacles],
+      steps: [...s.resolving.steps],
+      done: [...s.resolving.done],
+    },
     playedThisRound: [[...s.playedThisRound[0]], [...s.playedThisRound[1]]],
     quiet,
   };

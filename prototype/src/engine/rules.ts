@@ -1,5 +1,5 @@
 import { CARDS, isTargeted, reachOf } from "../data/cards";
-import { STARTER_DECKS } from "../data/decks";
+import { buildDeck } from "../data/decks";
 import { EFFECTS } from "../data/effects";
 import { inArena, isObstacle, makeArena } from "./arena";
 import { EffectCtx, checkOver, damage } from "./combat";
@@ -12,7 +12,6 @@ import {
   HAND_SIZE,
   MAX_ROUNDS,
   MAX_VITALITY,
-  RETAIN_LIMIT,
   Side,
   cloneState,
   emit,
@@ -25,15 +24,19 @@ export function createDuel(opts: { seed?: number } = {}): DuelState {
   const seed = opts.seed ?? randomSeed();
   const rand = makeRng(seed);
   const arena = makeArena(rand);
-  const fighter = (cls: ClassName, pos: Hex): Fighter => ({
-    cls,
-    pos,
-    vitality: MAX_VITALITY,
-    deck: shuffleInPlace([...STARTER_DECKS[cls]], rand),
-    hand: [],
-    discard: [],
-    stacks: [],
-  });
+  const fighter = (cls: ClassName, pos: Hex): Fighter => {
+    const { deck, extras } = buildDeck(cls, rand);
+    return {
+      cls,
+      pos,
+      vitality: MAX_VITALITY,
+      deck: shuffleInPlace(deck, rand),
+      hand: [],
+      discard: [],
+      stacks: [],
+      extras,
+    };
+  };
   const s: DuelState = {
     initialSeed: seed,
     seed: Math.floor(rand() * 2 ** 31),
@@ -54,6 +57,11 @@ export function createDuel(opts: { seed?: number } = {}): DuelState {
     turns: [],
   };
   startRound(s);
+  // The rolled pool cards are open information — both the AI and the deck list already know them.
+  for (const side of [0, 1] as Side[]) {
+    const f = s.fighters[side];
+    emit(s, side, "info", `${f.cls} pool cards: ${f.extras.join(", ")}.`);
+  }
   return s;
 }
 
@@ -73,6 +81,8 @@ export function step(s: DuelState, action: Action) {
       return move(s, action.side, action.to);
     case "play":
       return play(s, action.side, action.index);
+    case "pass":
+      return pass(s, action.side);
     case "end":
       return endResolve(s, action.side);
   }
@@ -163,20 +173,54 @@ function beginResolution(s: DuelState) {
   }
   // Order only. The totals are never announced.
   emit(s, first, "order", `${s.fighters[first].cls} acts first.`);
-  startResolve(s, first);
+
+  const budgetOf = (side: Side) => {
+    const names = s.committed[side]!;
+    const movement = names.reduce((n, c) => n + CARDS[c].movement, 0);
+    return Math.max(0, movement - total(s.fighters[side], "Snared"));
+  };
+  const phasing = (side: Side) => s.committed[side]!.includes("Phase Step");
+  s.resolving = {
+    side: first,
+    turn: 0,
+    budget: [budgetOf(0), budgetOf(1)],
+    spent: [0, 0],
+    played: [
+      [false, false],
+      [false, false],
+    ],
+    ignoreObstacles: [phasing(0), phasing(1)],
+    steps: [0, 0],
+    done: [false, false],
+    cardThisStep: false,
+  };
 }
 
-function startResolve(s: DuelState, side: Side) {
-  const f = s.fighters[side];
-  const names = s.committed[side]!;
-  const movement = names.reduce((n, c) => n + CARDS[c].movement, 0);
-  s.resolving = {
-    side,
-    budget: Math.max(0, movement - total(f, "Snared")),
-    spent: 0,
-    played: [false, false],
-    ignoreObstacles: names.includes("Phase Step"),
-  };
+/**
+ * Hands the baton to the other side, or ends the round once both are finished.
+ * Only `pass` and `end` reach here, and both advance a bounded counter, so the
+ * alternation always terminates.
+ */
+function advance(s: DuelState) {
+  if (s.phase === "over") return;
+  const r = s.resolving!;
+  if (r.done[0] && r.done[1]) return endRound(s);
+  const next = other(r.side);
+  if (!r.done[next]) r.side = next;
+  r.cardThisStep = false;
+  r.turn++;
+}
+
+/** Forfeits everything still unplayed and retires this side for the round. */
+function markDone(s: DuelState, side: Side) {
+  const r = s.resolving!;
+  r.played[side].forEach((p, i) => {
+    if (p) return;
+    r.played[side][i] = true;
+    s.playedThisRound[side].push({ name: s.committed[side]![i], lost: true });
+    emit(s, side, "lost", `${s.committed[side]![i]} is forfeited.`);
+  });
+  r.done[side] = true;
 }
 
 function record(s: DuelState, action: Action) {
@@ -191,8 +235,8 @@ function record(s: DuelState, action: Action) {
 }
 
 function assertResolving(s: DuelState, side: Side) {
-  if (s.phase !== "resolve" || !s.resolving || s.resolving.side !== side) {
-    throw new Error("Not this side's resolution");
+  if (s.phase !== "resolve" || !s.resolving || s.resolving.side !== side || s.resolving.done[side]) {
+    throw new Error("Not this side's mini-turn");
   }
 }
 
@@ -208,8 +252,8 @@ export function reachableNow(s: DuelState): Map<string, ReachNode> {
   const foe = s.fighters[other(r.side)].pos;
   return reachable(
     f.pos,
-    r.budget - r.spent,
-    (h) => inArena(s.arena, h) && !hexEq(h, foe) && (r.ignoreObstacles || !isObstacle(s.arena, h)),
+    r.budget[r.side] - r.spent[r.side],
+    (h) => inArena(s.arena, h) && !hexEq(h, foe) && (r.ignoreObstacles[r.side] || !isObstacle(s.arena, h)),
     (h) => !isObstacle(s.arena, h),
   );
 }
@@ -221,7 +265,7 @@ function move(s: DuelState, side: Side, to: Hex) {
   if (node.cost === 0) return;
   const f = s.fighters[side];
   f.pos = { ...node.hex };
-  s.resolving!.spent += node.cost;
+  s.resolving!.spent[side] += node.cost;
   record(s, { type: "move", side, to });
   emit(s, side, "move", `${f.cls} moves ${node.cost} (distance now ${distance(s)}).`);
 }
@@ -229,8 +273,10 @@ function move(s: DuelState, side: Side, to: Hex) {
 function play(s: DuelState, side: Side, index: 0 | 1) {
   assertResolving(s, side);
   const r = s.resolving!;
-  if (r.played[index]) throw new Error("Card already played");
-  r.played[index] = true;
+  if (r.played[side][index]) throw new Error("Card already played");
+  if (r.cardThisStep) throw new Error("Only one card per mini-turn");
+  r.played[side][index] = true;
+  r.cardThisStep = true;
   record(s, { type: "play", side, index });
 
   const name = s.committed[side]![index];
@@ -252,18 +298,22 @@ function play(s: DuelState, side: Side, index: 0 | 1) {
   checkOver(s);
 }
 
-function endResolve(s: DuelState, side: Side) {
+/** Ends this mini-turn. Unplayed cards wait for the side's next one. */
+function pass(s: DuelState, side: Side) {
   assertResolving(s, side);
   const r = s.resolving!;
+  record(s, { type: "pass", side });
+  r.steps[side]++;
+  if (r.steps[side] >= 2) markDone(s, side);
+  advance(s);
+}
+
+/** Forfeits every unplayed card and retires for the round. */
+function endResolve(s: DuelState, side: Side) {
+  assertResolving(s, side);
   record(s, { type: "end", side });
-  r.played.forEach((p, i) => {
-    if (!p) {
-      s.playedThisRound[side].push({ name: s.committed[side]![i], lost: true });
-      emit(s, side, "lost", `${s.committed[side]![i]} is forfeited.`);
-    }
-  });
-  if (side === s.order![0]) startResolve(s, s.order![1]);
-  else endRound(s);
+  markDone(s, side);
+  advance(s);
 }
 
 function endRound(s: DuelState) {
@@ -277,15 +327,8 @@ function endRound(s: DuelState) {
 
   for (const f of s.fighters) f.stacks = f.stacks.filter((st) => !st.aged);
 
-  s.fighters.forEach((f, side) => {
-    f.discard.push(...s.committed[side]!);
-    const kept: string[] = [];
-    for (const name of f.hand) {
-      if (CARDS[name].retain && kept.length < RETAIN_LIMIT) kept.push(name);
-      else f.discard.push(name);
-    }
-    f.hand = kept;
-  });
+  // The rest of the hand carries over; startRound draws each side back up to HAND_SIZE.
+  s.fighters.forEach((f, side) => f.discard.push(...s.committed[side]!));
 
   if (s.round >= s.maxRounds) {
     const [a, b] = [s.fighters[0].vitality, s.fighters[1].vitality];
