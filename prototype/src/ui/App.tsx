@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { STARTER_DECKS } from "../data/decks";
+import { POOL_PICKS, baseDeck } from "../data/decks";
 import { randomSeed } from "../engine/rng";
 import type { Side } from "../engine/state";
 import { Duel } from "./Duel";
@@ -8,8 +8,9 @@ type Screen = { kind: "menu" } | { kind: "duel"; human: Side; seed: number };
 
 function deckSummary(cls: "Wizard" | "Barbarian") {
   const counts = new Map<string, number>();
-  for (const c of STARTER_DECKS[cls]) counts.set(c, (counts.get(c) ?? 0) + 1);
-  return [...counts].map(([c, n]) => (n > 1 ? `${c} ×${n}` : c)).join(" · ");
+  for (const c of baseDeck(cls)) counts.set(c, (counts.get(c) ?? 0) + 1);
+  const base = [...counts].map(([c, n]) => (n > 1 ? `${c} ×${n}` : c)).join(" · ");
+  return `${base} · +${POOL_PICKS} random pool cards`;
 }
 
 export default function App() {
