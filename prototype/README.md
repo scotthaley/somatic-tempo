@@ -25,14 +25,48 @@ pnpm dev            # or just the browser at http://localhost:1420
 
 ## Share
 
+The prototype is deployed on every push to `prototype2`:
+
+**https://scotthaley.github.io/somatic-tempo/**
+
 ```sh
-pnpm tauri build --bundles app,dmg   # → src-tauri/target/release/bundle/{macos,dmg}
 pnpm build                            # → dist/ (static site, runs in any browser)
+pnpm tauri build --bundles app,dmg   # → src-tauri/target/release/bundle/{macos,dmg}
 ```
 
+- `dist/` can be dropped on any static host; `base` is `"./"` so a subpath works.
 - The macOS build is unsigned. Testers need to right-click → Open the first time.
 - Windows and Linux builds have to be built on those platforms (or in CI).
-- `dist/` can be dropped on any static host (itch.io, Netlify, GitHub Pages).
+
+## Playing someone else
+
+"Play a friend" mints a room code, puts it in the URL, and shows an invite
+link. The other player opens that link and takes the free side. A refresh
+rejoins; a third visitor spectates.
+
+```sh
+pnpm room:dev      # the relay, on localhost:8787
+pnpm dev           # the game, on localhost:1420 — talks to the relay above
+pnpm room:deploy   # push the relay to Cloudflare
+pnpm room:check    # typecheck the worker
+```
+
+The relay is deliberately dumb: it orders and rebroadcasts `Action`s and holds
+no rules, because seed plus an ordered action log fully determines a duel, so
+both browsers replay the same log through the same engine. Two consequences
+worth knowing:
+
+- **It is trivially cheatable.** Each client holds the whole state, opponent's
+  hand included. That is the right trade for playtesting and the wrong one for
+  anything public.
+- **Commits are the exception.** The room withholds each commit until both have
+  arrived, then releases them side 0 first. Releasing on arrival would show the
+  second player what the first committed, and releasing in arrival order would
+  give the two clients differently ordered logs.
+
+Clients apply nothing until the room echoes it back, so they cannot diverge.
+`src/net/replay.test.ts` plays whole duels through the room and asserts two
+independently folded clients stay byte-identical.
 
 ## Other scripts
 
@@ -51,6 +85,8 @@ SAMPLES=16 CANDIDATES=8 pnpm sim 30     # deeper AI search
 | `src/data/decks.ts` | Deck construction: the fixed 6-card base plus `POOL_PICKS` random pool cards. |
 | `src/engine/` | Pure rules engine. `rules.ts` (round flow), `combat.ts` (damage pipeline), `state.ts` (types, statuses, constants such as vitality, hand size, round cap). |
 | `src/ai/` | Heuristic AI, run in a Web Worker. |
+| `src/net/` | Online play: the wire protocol, the (pure, tested) room logic, and the client that folds the log. |
+| `server/` | Cloudflare worker wrapping the room logic in a Durable Object. |
 | `src/ui/` | React + SVG UI. |
 | `scripts/sim.ts` | Headless AI-vs-AI runner. |
 
