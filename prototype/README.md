@@ -4,6 +4,17 @@ A playable prototype of the duel from `../duel-roguelike-design.md`, using the r
 starting decks in `somatic-tempo-baseline-cards.md`. You play a Wizard or a Barbarian against a
 local heuristic AI. There are no draft, relics or runs yet.
 
+## Prototype 2 variant
+
+This branch deviates from §4 of the design doc in three ways, to playtest them:
+
+1. **Sides alternate single cards** instead of the first player resolving both of its cards before
+   the second player acts at all.
+2. **The hand carries over.** Only the two committed cards are discarded; you draw back up to 5.
+3. **Starting decks are 6 fixed cards plus 4 random class pool cards**, rolled from the duel's seed.
+
+Compare against `main` with `pnpm sim 40` on each branch.
+
 ## Run
 
 ```sh
@@ -37,7 +48,7 @@ SAMPLES=16 CANDIDATES=8 pnpm sim 30     # deeper AI search
 | --- | --- |
 | `somatic-tempo-cards.csv` | Card stats (speed, movement, range, type, keywords, text). Edit numbers here. |
 | `src/data/effects.ts` | What each card does. Add a function here when you add a card to the CSV. |
-| `src/data/decks.ts` | Starting decks. Swap pool cards in here to test them. |
+| `src/data/decks.ts` | Deck construction: the fixed 6-card base plus `POOL_PICKS` random pool cards. |
 | `src/engine/` | Pure rules engine. `rules.ts` (round flow), `combat.ts` (damage pipeline), `state.ts` (types, statuses, constants such as vitality, hand size, round cap). |
 | `src/ai/` | Heuristic AI, run in a Web Worker. |
 | `src/ui/` | React + SVG UI. |
@@ -61,14 +72,25 @@ Everything follows the two design docs. Where they were silent, the prototype as
 - **Charges are consumed oldest first**, so aged stacks are used before fresh ones.
 - **Retaliate, Burning and Siphon's bonus** are non-attack damage. They go through Warded but
   don't trigger Exposed, Interrupt or Retaliate.
-- **Movement** can't pass through the opponent. Phase Step ignores obstacles for the whole
-  resolution if it is committed.
-- **Forfeits:** ending your resolution with an unplayed card forfeits it.
+- **Alternating play.** The sum of committed speeds still sets the order, lower first. Sides then
+  trade **mini-turns**: any moves, at most one card, any moves, ended by *End step*. Each side gets
+  two mini-turns, so the cards resolve first, second, first, second.
+- **Movement** is pooled per side for the whole round (the two cards' movement minus Snared) and
+  carries between that side's two mini-turns. It can't pass through the opponent. Phase Step ignores
+  obstacles for that side's whole round, whichever of its cards is played first.
+- **Forfeits:** *Forfeit rest* drops every card you haven't played and retires you for the round;
+  the other side then plays out its remaining mini-turns alone. Passing both mini-turns without
+  playing forfeits the same way.
 - **Push** goes along the hex direction closest to the pusher→target line. It stops at obstacles,
   the arena edge, or the pusher.
 - **Arena:** radius-4 hex (9 wide). Starts are 5 apart. Each duel gets a random obstacle layout,
   mirrored so it is fair to both starts.
-- **Retain** keeps at most 1 unplayed Retain card in hand. The reshuffle is free.
+- **The hand carries over.** Only the two committed cards go to the discard; everything else stays
+  and you draw back up to 5. That makes the **Retain** keyword inert — it is still on the cards but
+  nothing reads it. The reshuffle is free.
+- **Decks** are 2 copies of each basic, 1 of each class starter, and 4 distinct cards drawn from
+  that class's 10-card pool using the duel's seed. Still 10 cards. The picks are named at the top of
+  the event log and on each fighter panel, so a seed reproduces a duel exactly.
 
 ## Playtest data
 
@@ -87,8 +109,8 @@ and each move/play action). That is the recording format the history-based ghost
 - **Commit:** for each distinct pair in hand, it samples opponent hands from the cards the opponent
   could hold (never their real hand or commitment). It guesses the opponent's pair, simulates the
   round with a shallow resolution planner, and softmaxes over the averaged scores.
-- **Resolve:** it searches both card orders and every place to stand before, between and after
-  the cards, then scores the result.
+- **Resolve:** it plans one mini-turn at a time — where to stand, which card to play, where to kite
+  to — and re-plans each time the baton returns, so it reacts to the opponent's interleaved cards.
 - **Evaluation:** vitality, statuses, and each class's preferred range. The Wizard likes distance
   3–4 and dislikes being cornered. The Barbarian wants to be adjacent.
 
