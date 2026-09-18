@@ -5,6 +5,11 @@
   "compatibility_date": "2026-09-01",
   "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },
+  "vars": {
+    // Only these origins may open a socket. Add a host here before serving the
+    // game from it; empty would allow any origin.
+    "ALLOWED_ORIGINS": "https://scotthaley.github.io,http://localhost:1420"
+  },
   "durable_objects": {
     "bindings": [{ "name": "DuelRoom", "class_name": "DuelRoom" }]
   },
