@@ -19,7 +19,9 @@ export function Duel({ match, onExit, onRematch, onSwap }: Props) {
   const { s, human, dispatch, spectating, pendingCommit, opponentCommitted } = match;
   const [selected, setSelected] = useState<number[]>([]);
   const [hovered, setHovered] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
   const ai = other(human);
+  const opponentLabel = match.shareUrl ? "Them" : "AI";
 
   useEffect(() => setSelected([]), [s.round, match.matchId]);
 
@@ -91,7 +93,7 @@ export function Duel({ match, onExit, onRematch, onSwap }: Props) {
       </header>
 
       <aside className="left">
-        <FighterPanel s={s} side={ai} human={human} />
+        <FighterPanel s={s} side={ai} human={human} opponentLabel={opponentLabel} />
         <div className="panel opp-commit">
           <div className="panel-title">Opponent's cards this round</div>
           <div className="opp-cards">{oppSlots()}</div>
@@ -105,6 +107,7 @@ export function Duel({ match, onExit, onRematch, onSwap }: Props) {
           human={human}
           reach={reach}
           preview={preview}
+          opponentLabel={opponentLabel}
           onHex={(to) => dispatch({ type: "move", side: human, to })}
         />
         {myTurn && (
@@ -239,6 +242,37 @@ export function Duel({ match, onExit, onRematch, onSwap }: Props) {
           ) : null
         ) : null}
       </footer>
+
+      {match.status === "waiting" && match.shareUrl && (
+        <div className="overlay">
+          <div className="modal">
+            <h2>Waiting for an opponent</h2>
+            <p className="muted">Send them this link. The duel starts when they join.</p>
+            <div className="share">
+              <div className="share-label">Invite link</div>
+              <div className="share-row">
+                <input readOnly value={match.shareUrl} onFocus={(e) => e.currentTarget.select()} />
+                <button
+                  className="primary"
+                  onClick={() => {
+                    navigator.clipboard?.writeText(match.shareUrl!).then(
+                      () => setCopied(true),
+                      () => setCopied(false),
+                    );
+                  }}
+                >
+                  {copied ? "Copied" : "Copy"}
+                </button>
+              </div>
+            </div>
+            <div className="modal-actions" style={{ marginTop: 18 }}>
+              <button className="ghost" onClick={onExit}>
+                ← Menu
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {s.phase === "over" && (
         <EndScreen s={s} human={human} onRematch={onRematch} onSwap={onSwap} onExit={onExit} />

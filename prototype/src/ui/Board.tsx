@@ -37,9 +37,10 @@ interface Props {
   /** Reach of the hovered card, measured from the human fighter. */
   preview: number | null;
   onHex: (h: Hex) => void;
+  opponentLabel?: string;
 }
 
-export function Board({ s, human, reach, preview, onHex }: Props) {
+export function Board({ s, human, reach, preview, onHex, opponentLabel = "AI" }: Props) {
   const r = s.arena.radius;
   const hexes = useMemo(() => hexesWithin(r), [r]);
   const w = SIZE * Math.sqrt(3) * (2 * r + 1) + 16;
@@ -86,7 +87,7 @@ export function Board({ s, human, reach, preview, onHex }: Props) {
             <circle r={22} className="token" />
             <Glyph cls={f.cls} />
             <text className="token-label" y={36}>
-              {side === human ? "YOU" : "AI"}
+              {side === human ? "YOU" : opponentLabel.toUpperCase()}
             </text>
           </g>
         );

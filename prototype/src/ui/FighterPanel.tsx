@@ -33,7 +33,17 @@ function StatusChips({ stacks }: { stacks: Stack[] }) {
   );
 }
 
-export function FighterPanel({ s, side, human }: { s: DuelState; side: Side; human: Side }) {
+export function FighterPanel({
+  s,
+  side,
+  human,
+  opponentLabel = "AI",
+}: {
+  s: DuelState;
+  side: Side;
+  human: Side;
+  opponentLabel?: string;
+}) {
   const f = s.fighters[side];
   const pct = (f.vitality / MAX_VITALITY) * 100;
   const order = s.order ? (s.order[0] === side ? "1st" : "2nd") : null;
@@ -45,7 +55,7 @@ export function FighterPanel({ s, side, human }: { s: DuelState; side: Side; hum
       <div className="panel-head">
         <span className="swatch" />
         <b>{f.cls}</b>
-        <span className="who">{side === human ? "You" : "AI"}</span>
+        <span className="who">{side === human ? "You" : opponentLabel}</span>
         {order && <span className="order-pill">{order}</span>}
       </div>
       <div className="vitality">

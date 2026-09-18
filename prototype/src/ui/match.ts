@@ -30,6 +30,8 @@ export interface Match {
   opponentCommitted: boolean;
   /** Link to hand to an opponent; null in solo. */
   shareUrl: string | null;
+  /** Start a fresh duel. Online this asks the room; first click wins. */
+  onRematch: () => void;
 }
 
 /**

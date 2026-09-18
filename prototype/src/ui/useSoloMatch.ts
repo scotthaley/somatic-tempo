@@ -11,7 +11,15 @@ const AI_FIRST_ACTION_DELAY = 300;
 const AI_ACTION_INTERVAL = 750;
 
 /** A duel against the local search AI. The AI only ever runs from here. */
-export function useSoloMatch({ human, seed }: { human: Side; seed: number }): Match {
+export function useSoloMatch({
+  human,
+  seed,
+  onRematch,
+}: {
+  human: Side;
+  seed: number;
+  onRematch: () => void;
+}): Match {
   const [s, setS] = useState(() => createDuel({ seed }));
   const ai = other(human);
   const dispatch = (a: Action) => setS((prev) => safeApply(prev, a));
@@ -84,5 +92,6 @@ export function useSoloMatch({ human, seed }: { human: Side; seed: number }): Ma
     pendingCommit: false,
     opponentCommitted: !!s.committed[ai],
     shareUrl: null,
+    onRematch,
   };
 }
