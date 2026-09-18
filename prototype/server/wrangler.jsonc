@@ -1,0 +1,18 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "somatic-tempo-room",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+  "durable_objects": {
+    "bindings": [{ "name": "DuelRoom", "class_name": "DuelRoom" }]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      // SQLite-backed classes are the ones available on the Workers free plan.
+      "new_sqlite_classes": ["DuelRoom"]
+    }
+  ]
+}
