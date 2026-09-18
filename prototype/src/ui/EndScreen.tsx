@@ -5,7 +5,8 @@ interface Props {
   s: DuelState;
   human: Side;
   onRematch: () => void;
-  onSwap: () => void;
+  /** null when switching sides is not ours to choose (online). */
+  onSwap: (() => void) | null;
   onExit: () => void;
 }
 
@@ -93,7 +94,7 @@ export function EndScreen({ s, human, onRematch, onSwap, onExit }: Props) {
           <button className="primary" onClick={onRematch}>
             Rematch
           </button>
-          <button onClick={onSwap}>Switch class</button>
+          {onSwap && <button onClick={onSwap}>Switch class</button>}
           <button onClick={exportLog}>{copied ? "Copied!" : "Copy log JSON"}</button>
           <button className="ghost" onClick={onExit}>
             Menu

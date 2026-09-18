@@ -1,104 +1,31 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { aiCommit, aiResolve } from "../ai/client";
 import { CARDS, isTargeted, reachOf } from "../data/cards";
-import { apply, createDuel, distance, reachableNow } from "../engine/rules";
-import { Action, DuelState, Side, other } from "../engine/state";
+import { distance, reachableNow } from "../engine/rules";
+import { other } from "../engine/state";
 import { Board } from "./Board";
 import { CardBack, CardView } from "./CardView";
 import { EndScreen } from "./EndScreen";
 import { FighterPanel } from "./FighterPanel";
+import type { Match } from "./match";
 
 interface Props {
-  human: Side;
-  seed: number;
+  match: Match;
   onExit: () => void;
   onRematch: () => void;
-  onSwap: () => void;
+  onSwap: (() => void) | null;
 }
 
-const AI_COMMIT_DELAY = 500;
-const AI_FIRST_ACTION_DELAY = 300;
-const AI_ACTION_INTERVAL = 750;
-
-function safeApply(prev: DuelState, action: Action): DuelState {
-  try {
-    return apply(prev, action);
-  } catch (err) {
-    console.warn("Rejected action", action, err);
-    return prev;
-  }
-}
-
-export function Duel({ human, seed, onExit, onRematch, onSwap }: Props) {
-  const [s, setS] = useState(() => createDuel({ seed }));
+export function Duel({ match, onExit, onRematch, onSwap }: Props) {
+  const { s, human, dispatch, spectating, pendingCommit, opponentCommitted } = match;
   const [selected, setSelected] = useState<number[]>([]);
   const [hovered, setHovered] = useState<string | null>(null);
   const ai = other(human);
-  const dispatch = (a: Action) => setS((prev) => safeApply(prev, a));
 
-  useEffect(() => setSelected([]), [s.round]);
-
-  // AI commits as soon as a round opens; it never sees the human's commitment.
-  const aiMustCommit = s.phase === "commit" && !s.committed[ai];
-  useEffect(() => {
-    if (!aiMustCommit) return;
-    let live = true;
-    const round = s.round;
-    const started = performance.now();
-    aiCommit(s, ai)
-      .then((cards) => {
-        const wait = Math.max(0, AI_COMMIT_DELAY - (performance.now() - started));
-        setTimeout(() => {
-          if (!live) return;
-          setS((prev) =>
-            prev.round === round && prev.phase === "commit" && !prev.committed[ai]
-              ? safeApply(prev, { type: "commit", side: ai, cards })
-              : prev,
-          );
-        }, wait);
-      })
-      .catch((err) => console.error("AI commit failed", err));
-    return () => {
-      live = false;
-    };
-  }, [aiMustCommit, s.round]);
-
-  // The AI plays one mini-turn at a time, one action at a time so it can be followed
-  // on the board. Keyed on the baton counter, so it re-runs every time the AI's turn
-  // comes back around rather than once per round.
-  const aiTurn =
-    s.phase === "resolve" && s.resolving?.side === ai && !s.resolving.done[ai]
-      ? s.resolving.turn
-      : null;
-  useEffect(() => {
-    if (aiTurn === null) return;
-    let live = true;
-    const timers: number[] = [];
-    aiResolve(s, ai)
-      .then((actions) => {
-        actions.forEach((a, i) => {
-          timers.push(
-            window.setTimeout(() => {
-              if (!live) return;
-              // Drop anything that arrives after the baton has already moved on.
-              setS((prev) => (prev.resolving?.turn === aiTurn ? safeApply(prev, a) : prev));
-            }, AI_FIRST_ACTION_DELAY + i * AI_ACTION_INTERVAL),
-          );
-        });
-      })
-      .catch((err) => {
-        console.error("AI resolve failed", err);
-        if (live) dispatch({ type: "end", side: ai });
-      });
-    return () => {
-      live = false;
-      timers.forEach(clearTimeout);
-    };
-  }, [aiTurn]);
+  useEffect(() => setSelected([]), [s.round, match.matchId]);
 
   const me = s.fighters[human];
   const myR = s.resolving;
-  const myTurn = s.phase === "resolve" && myR?.side === human && !myR.done[human];
+  const myTurn = !spectating && s.phase === "resolve" && myR?.side === human && !myR.done[human];
   const reach = myTurn ? reachableNow(s) : null;
   const myCommit = s.committed[human];
   const myOrder = s.order ? (s.order[0] === human ? "1st" : "2nd") : null;
@@ -120,16 +47,25 @@ export function Duel({ human, seed, onExit, onRematch, onSwap }: Props) {
   }, [s.events.length]);
 
   const banner = useMemo(() => {
+    if (match.status === "connecting") return "Connecting…";
+    if (match.status === "disconnected") return "Disconnected — reconnecting…";
+    if (match.status === "waiting") return "Waiting for an opponent to join…";
+    if (match.status === "opponent-left") return "The opponent left — waiting for them to come back…";
     if (s.phase === "over") return "Duel over";
-    if (s.phase === "commit") return myCommit ? "Waiting for the opponent to commit…" : "Commit two cards";
+    if (spectating) return "Spectating";
+    if (s.phase === "commit")
+      return myCommit || pendingCommit ? "Waiting for the opponent to commit…" : "Commit two cards";
     if (myTurn) return `Your step — you act ${myOrder} this round`;
     if (myResolutionDone) return "You're finished — the opponent is still resolving…";
     return "Opponent's step…";
-  }, [s.phase, myCommit, myTurn, myOrder, myResolutionDone]);
+  }, [s.phase, myCommit, myTurn, myOrder, myResolutionDone, match.status, pendingCommit, spectating]);
 
   const oppSlots = () => {
     const played = s.playedThisRound[ai];
-    if (!s.committed[ai]) return <div className="opp-waiting">choosing…</div>;
+    if (!s.committed[ai])
+      return (
+        <div className="opp-waiting">{opponentCommitted ? "locked in" : "choosing…"}</div>
+      );
     return [0, 1].map((i) =>
       played[i] ? (
         <CardView key={i} name={played[i].name} lost={played[i].lost} compact />
@@ -196,7 +132,7 @@ export function Duel({ human, seed, onExit, onRematch, onSwap }: Props) {
       </aside>
 
       <footer className="hand-bar">
-        {s.phase === "commit" && !myCommit && (
+        {s.phase === "commit" && !myCommit && !pendingCommit && !spectating && (
           <>
             <div className="cards">
               {me.hand.map((name, i) => (

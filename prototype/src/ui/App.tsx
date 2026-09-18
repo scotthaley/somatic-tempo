@@ -3,6 +3,7 @@ import { POOL_PICKS, baseDeck } from "../data/decks";
 import { randomSeed } from "../engine/rng";
 import type { Side } from "../engine/state";
 import { Duel } from "./Duel";
+import { useSoloMatch } from "./useSoloMatch";
 
 type Screen = { kind: "menu" } | { kind: "duel"; human: Side; seed: number };
 
@@ -13,13 +14,31 @@ function deckSummary(cls: "Wizard" | "Barbarian") {
   return `${base} · +${POOL_PICKS} random pool cards`;
 }
 
+function SoloDuel(props: {
+  human: Side;
+  seed: number;
+  onExit: () => void;
+  onRematch: () => void;
+  onSwap: () => void;
+}) {
+  const match = useSoloMatch({ human: props.human, seed: props.seed });
+  return (
+    <Duel
+      match={match}
+      onExit={props.onExit}
+      onRematch={props.onRematch}
+      onSwap={props.onSwap}
+    />
+  );
+}
+
 export default function App() {
   const [screen, setScreen] = useState<Screen>({ kind: "menu" });
   const start = (human: Side) => setScreen({ kind: "duel", human, seed: randomSeed() });
 
   if (screen.kind === "duel") {
     return (
-      <Duel
+      <SoloDuel
         key={screen.seed}
         human={screen.human}
         seed={screen.seed}
