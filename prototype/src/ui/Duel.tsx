@@ -17,7 +17,7 @@ interface Props {
 }
 
 const AI_COMMIT_DELAY = 500;
-const AI_FIRST_ACTION_DELAY = 700;
+const AI_FIRST_ACTION_DELAY = 300;
 const AI_ACTION_INTERVAL = 750;
 
 function safeApply(prev: DuelState, action: Action): DuelState {
@@ -63,10 +63,15 @@ export function Duel({ human, seed, onExit, onRematch, onSwap }: Props) {
     };
   }, [aiMustCommit, s.round]);
 
-  // AI resolution plays out one action at a time so it can be followed on the board.
-  const aiResolveRound = s.phase === "resolve" && s.resolving?.side === ai ? s.round : null;
+  // The AI plays one mini-turn at a time, one action at a time so it can be followed
+  // on the board. Keyed on the baton counter, so it re-runs every time the AI's turn
+  // comes back around rather than once per round.
+  const aiTurn =
+    s.phase === "resolve" && s.resolving?.side === ai && !s.resolving.done[ai]
+      ? s.resolving.turn
+      : null;
   useEffect(() => {
-    if (aiResolveRound === null) return;
+    if (aiTurn === null) return;
     let live = true;
     const timers: number[] = [];
     aiResolve(s, ai)
@@ -74,7 +79,9 @@ export function Duel({ human, seed, onExit, onRematch, onSwap }: Props) {
         actions.forEach((a, i) => {
           timers.push(
             window.setTimeout(() => {
-              if (live) setS((prev) => safeApply(prev, a));
+              if (!live) return;
+              // Drop anything that arrives after the baton has already moved on.
+              setS((prev) => (prev.resolving?.turn === aiTurn ? safeApply(prev, a) : prev));
             }, AI_FIRST_ACTION_DELAY + i * AI_ACTION_INTERVAL),
           );
         });
@@ -87,15 +94,15 @@ export function Duel({ human, seed, onExit, onRematch, onSwap }: Props) {
       live = false;
       timers.forEach(clearTimeout);
     };
-  }, [aiResolveRound]);
+  }, [aiTurn]);
 
   const me = s.fighters[human];
-  const myTurn = s.phase === "resolve" && s.resolving?.side === human;
+  const myR = s.resolving;
+  const myTurn = s.phase === "resolve" && myR?.side === human && !myR.done[human];
   const reach = myTurn ? reachableNow(s) : null;
   const myCommit = s.committed[human];
   const myOrder = s.order ? (s.order[0] === human ? "1st" : "2nd") : null;
-  const myResolutionDone =
-    s.phase !== "commit" && s.order !== null && (s.order[0] === human ? s.resolving?.side !== human : false);
+  const myResolutionDone = myR?.done[human] ?? false;
 
   const preview = hovered && isTargeted(CARDS[hovered]) ? reachOf(CARDS[hovered]) : null;
 
@@ -115,9 +122,10 @@ export function Duel({ human, seed, onExit, onRematch, onSwap }: Props) {
   const banner = useMemo(() => {
     if (s.phase === "over") return "Duel over";
     if (s.phase === "commit") return myCommit ? "Waiting for the opponent to commit…" : "Commit two cards";
-    if (myTurn) return `You act ${myOrder} — resolve your cards`;
-    return `Opponent acts ${myOrder === "1st" ? "2nd" : "1st"} — resolving…`;
-  }, [s.phase, myCommit, myTurn, myOrder]);
+    if (myTurn) return `Your step — you act ${myOrder} this round`;
+    if (myResolutionDone) return "You're finished — the opponent is still resolving…";
+    return "Opponent's step…";
+  }, [s.phase, myCommit, myTurn, myOrder, myResolutionDone]);
 
   const oppSlots = () => {
     const played = s.playedThisRound[ai];
@@ -230,7 +238,7 @@ export function Duel({ human, seed, onExit, onRematch, onSwap }: Props) {
             <>
               <div className="cards">
                 {myCommit.map((name, i) => {
-                  const played = myTurn ? s.resolving!.played[i] : myResolutionDone;
+                  const played = myR ? myR.played[human][i] : false;
                   const lostEntry = s.playedThisRound[human].find((p) => p.name === name && p.lost);
                   return (
                     <CardView
@@ -240,7 +248,7 @@ export function Duel({ human, seed, onExit, onRematch, onSwap }: Props) {
                       lost={played && !!lostEntry}
                       onHover={(h) => setHovered(h ? name : null)}
                     >
-                      {myTurn && !played && (
+                      {myTurn && !played && !myR!.cardThisStep && (
                         <button
                           className="primary small"
                           onClick={() => {
@@ -256,7 +264,7 @@ export function Duel({ human, seed, onExit, onRematch, onSwap }: Props) {
                 })}
                 {me.hand.length > 0 && (
                   <div className="rest">
-                    <div className="rest-label">Rest of hand (discarded at end of round)</div>
+                    <div className="rest-label">Rest of hand (kept — you draw back up to 5)</div>
                     <div className="rest-cards">
                       {me.hand.map((name, i) => (
                         <CardView key={i} name={name} compact dimmed />
@@ -267,19 +275,26 @@ export function Duel({ human, seed, onExit, onRematch, onSwap }: Props) {
               </div>
               <div className="controls">
                 {myTurn ? (
-                  <>
-                    <div className="summary">
-                      Movement left <b>{s.resolving!.budget - s.resolving!.spent}</b>
-                    </div>
-                    <button
-                      className={s.resolving!.played.every(Boolean) ? "primary" : ""}
-                      onClick={() => dispatch({ type: "end", side: human })}
-                    >
-                      {s.resolving!.played.every(Boolean)
-                        ? "End turn"
-                        : `End turn (forfeit ${s.resolving!.played.filter((p) => !p).length})`}
-                    </button>
-                  </>
+                  (() => {
+                    const left = myR!.played[human].filter((p) => !p).length;
+                    return (
+                      <>
+                        <div className="summary">
+                          Movement left <b>{myR!.budget[human] - myR!.spent[human]}</b>
+                          {" · "}
+                          Step <b>{myR!.steps[human] + 1}</b> / 2
+                        </div>
+                        <button className="primary" onClick={() => dispatch({ type: "pass", side: human })}>
+                          {left === 0 ? "End turn" : "End step"}
+                        </button>
+                        {left > 0 && (
+                          <button onClick={() => dispatch({ type: "end", side: human })}>
+                            Forfeit rest ({left})
+                          </button>
+                        )}
+                      </>
+                    );
+                  })()
                 ) : (
                   <div className="summary muted">{banner}</div>
                 )}

@@ -37,9 +37,11 @@ export function FighterPanel({ s, side, human }: { s: DuelState; side: Side; hum
   const f = s.fighters[side];
   const pct = (f.vitality / MAX_VITALITY) * 100;
   const order = s.order ? (s.order[0] === side ? "1st" : "2nd") : null;
-  const resolving = s.resolving?.side === side ? s.resolving : null;
+  // Both sides' budgets live for the whole round now, so show them side by side.
+  const r = s.resolving;
+  const active = r?.side === side && !r.done[side];
   return (
-    <div className={`panel fighter ${f.cls.toLowerCase()} ${resolving ? "active" : ""}`}>
+    <div className={`panel fighter ${f.cls.toLowerCase()} ${active ? "active" : ""}`}>
       <div className="panel-head">
         <span className="swatch" />
         <b>{f.cls}</b>
@@ -58,11 +60,15 @@ export function FighterPanel({ s, side, human }: { s: DuelState; side: Side; hum
       <div className="counts">
         Deck {f.deck.length} · Hand {f.hand.length} · Discard {f.discard.length}
       </div>
-      {resolving && (
+      {r && (
         <div className="moves">
-          Movement left: <b>{resolving.budget - resolving.spent}</b> / {resolving.budget}
+          Movement left: <b>{r.budget[side] - r.spent[side]}</b> / {r.budget[side]}
+          {r.done[side] && " · done"}
         </div>
       )}
+      <div className="pool-picks" title="The random pool cards rolled into this deck.">
+        Pool: {f.extras.join(", ")}
+      </div>
     </div>
   );
 }
