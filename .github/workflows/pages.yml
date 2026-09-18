@@ -28,6 +28,10 @@ jobs:
       # Must precede setup-node so its pnpm cache can find the binary.
       # Version comes from the packageManager field in prototype/package.json.
       - uses: pnpm/action-setup@v4
+        with:
+          # defaults.run.working-directory does not apply to actions, only to
+          # run steps, so this path is needed to find the packageManager field.
+          package_json_file: prototype/package.json
 
       - uses: actions/setup-node@v4
         with:
