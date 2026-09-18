@@ -111,6 +111,8 @@ export function chooseCommit(state: DuelState, side: Side, opts: CommitOptions =
   const opp = other(side);
   const foe = state.fighters[opp];
   // Hidden information: the AI knows the opponent's deck composition, not their hand.
+  // With hand carryover the opponent's kept cards are sticky across rounds, so this
+  // sampler over-randomizes a little. Good enough for a playtest branch.
   const pool = [...foe.deck, ...foe.hand, ...(state.committed[opp] ?? [])];
   const handSize = Math.min(HAND_SIZE, pool.length);
 
@@ -135,6 +137,7 @@ export function chooseCommit(state: DuelState, side: Side, opts: CommitOptions =
       );
       step(t, { type: "commit", side: opp, cards: softmaxPick(oppPairs, oppScores, 2, rand) });
 
+      // Sides alternate mini-turns, so this now runs ~4-6 times per round.
       const round = t.round;
       while (t.phase === "resolve" && t.round === round) {
         const plan = planResolution(t, t.resolving!.side, { maxCandidates: planCandidates });

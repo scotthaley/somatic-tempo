@@ -34,9 +34,32 @@ function candidates(s: DuelState, side: Side, name: string, limit: number): Hex[
   return scored.slice(0, limit).map((x) => x.hex);
 }
 
+/** Reposition with whatever movement is left, then end the mini-turn. */
+function finishPlan(state: DuelState, side: Side, last: Action): Plan {
+  const t = cloneState(state);
+  const f = t.fighters[side];
+  const home = f.pos;
+  let bestHex = home;
+  let bestScore = -Infinity;
+  for (const n of reachableNow(t).values()) {
+    f.pos = n.hex;
+    const sc = evaluate(t, side) - n.cost * 0.1;
+    if (sc > bestScore) {
+      bestScore = sc;
+      bestHex = n.hex;
+    }
+  }
+  f.pos = home;
+  const tail: Action[] = hexEq(bestHex, home) ? [] : [{ type: "move", side, to: bestHex }];
+  return { actions: [...tail, last], score: bestScore };
+}
+
 /**
- * Best way to resolve the committed pair: card order, and where to stand before,
- * between and after the cards. `maxCandidates` bounds the search per card.
+ * Best way to spend one mini-turn: where to stand, and which of the committed cards
+ * to play. Sides alternate, so the planner runs again each time the baton comes back
+ * and always sees the opponent's interleaved actions.
+ *
+ * `maxCandidates` bounds the positions considered for the card.
  */
 export function planResolution(
   state: DuelState,
@@ -45,58 +68,39 @@ export function planResolution(
 ): Plan {
   const limit = opts.maxCandidates ?? Infinity;
   const r = state.resolving!;
-  const names = state.committed[side]!;
-  const unplayed = ([0, 1] as const).filter((i) => !r.played[i]);
-  const orders: (0 | 1)[][] =
-    unplayed.length === 2 ? (names[0] === names[1] ? [[0, 1]] : [[0, 1], [1, 0]]) : [unplayed];
+  const unplayed = ([0, 1] as const).filter((i) => !r.played[side][i]);
 
-  let best: Plan = { actions: [{ type: "end", side }], score: -Infinity };
+  // Nothing left to play: reposition and retire for the round.
+  if (unplayed.length === 0) return finishPlan(state, side, { type: "end", side });
 
-  const finish = (t: DuelState, actions: Action[]) => {
-    if (t.phase === "over") {
-      const score = evaluate(t, side);
-      if (score > best.score) best = { actions, score };
-      return;
-    }
-    const f = t.fighters[side];
-    const home = f.pos;
-    let bestHex = home;
-    let bestScore = -Infinity;
-    for (const n of reachableNow(t).values()) {
-      f.pos = n.hex;
-      const sc = evaluate(t, side) - n.cost * 0.1;
-      if (sc > bestScore) {
-        bestScore = sc;
-        bestHex = n.hex;
-      }
-    }
-    f.pos = home;
-    if (bestScore > best.score) {
-      const tail: Action[] = hexEq(bestHex, home) ? [] : [{ type: "move", side, to: bestHex }];
-      best = { actions: [...actions, ...tail, { type: "end", side }], score: bestScore };
-    }
-  };
-
-  const search = (t: DuelState, remaining: (0 | 1)[], actions: Action[]) => {
-    if (t.phase === "over" || remaining.length === 0) return finish(t, actions);
-    const [index, ...rest] = remaining;
-    const name = t.committed[side]![index];
-    const spots = positional(name) ? candidates(t, side, name, limit) : [t.fighters[side].pos];
+  let best: Plan = { actions: [], score: -Infinity };
+  for (const index of unplayed) {
+    const name = state.committed[side]![index];
+    const spots = positional(name) ? candidates(state, side, name, limit) : [state.fighters[side].pos];
     for (const spot of spots) {
-      const u = cloneState(t);
-      const acts = [...actions];
-      if (!hexEq(spot, u.fighters[side].pos)) {
+      const t = cloneState(state);
+      const acts: Action[] = [];
+      if (!hexEq(spot, t.fighters[side].pos)) {
         const mv: Action = { type: "move", side, to: spot };
-        step(u, mv);
+        step(t, mv);
         acts.push(mv);
       }
       const pl: Action = { type: "play", side, index };
-      step(u, pl);
+      step(t, pl);
       acts.push(pl);
-      search(u, rest, acts);
+      if (t.phase === "over") {
+        const score = evaluate(t, side);
+        if (score > best.score) best = { actions: acts, score };
+        continue;
+      }
+      // Kite with whatever movement is left, then hand the baton over.
+      const tail = finishPlan(t, side, { type: "pass", side });
+      if (tail.score > best.score) best = { actions: [...acts, ...tail.actions], score: tail.score };
     }
-  };
+  }
 
-  for (const order of orders) search(cloneState(state), order, []);
+  // Every card was out of reach and scored below -Infinity is impossible, but guard anyway:
+  // passing without playing is legal and keeps the cards for the next mini-turn.
+  if (best.actions.length === 0) return finishPlan(state, side, { type: "pass", side });
   return best;
 }
